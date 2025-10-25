@@ -17,11 +17,19 @@ from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from fpdf import FPDF
 from io import BytesIO
-import base64
-import os
 import warnings
 
 warnings.filterwarnings("ignore")
+
+# --------------------------------------------------------------------------
+# Initialize session state
+# --------------------------------------------------------------------------
+if "data" not in st.session_state:
+    st.session_state["data"] = None
+if "pred_df" not in st.session_state:
+    st.session_state["pred_df"] = None
+if "metrics" not in st.session_state:
+    st.session_state["metrics"] = None
 
 # --------------------------------------------------------------------------
 # Utility Functions
@@ -85,6 +93,7 @@ def build_model_pipeline(num_cols, cat_cols, clf_choice="rf"):
 
 def safe_train_test_split(X, y, test_size=0.2, random_state=42):
     """Safely split data; fallback to non-stratified if class imbalance"""
+    from sklearn.model_selection import train_test_split
     try:
         return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
     except ValueError:
@@ -127,13 +136,17 @@ def create_excel_report(df, pred_df):
 
 
 # --------------------------------------------------------------------------
-# Streamlit UI Structure
+# Streamlit UI
 # --------------------------------------------------------------------------
-
 st.set_page_config(page_title="Microplastic Risk Dashboard", layout="wide")
 
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["Home", "Upload Dataset", "Data Analysis", "Prediction Dashboard", "Reports"])
+
+if st.sidebar.button("🔄 Reset Session"):
+    for key in ["data", "pred_df", "metrics"]:
+        st.session_state[key] = None
+    st.experimental_rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("🌊 Environmental Microplastic Risk Analyzer")
@@ -144,7 +157,7 @@ st.sidebar.caption("🌊 Environmental Microplastic Risk Analyzer")
 if page == "Home":
     st.title("🌍 Microplastic Pollution Risk Assessment Dashboard")
     st.markdown("""
-    This system predicts microplastic pollution risk (Low / Medium / High) 
+    This system predicts microplastic pollution risk (Low / Medium / High)
     based on environmental indicators using **Random Forest** and **XGBoost** models.
     """)
     st.image("https://images.unsplash.com/photo-1507525428034-b723cf961d3e", use_container_width=True)
@@ -159,12 +172,16 @@ elif page == "Upload Dataset":
 
     if uploaded_file is not None:
         df = load_data(uploaded_file)
-        st.session_state["data"] = df
-        st.success(f"Loaded dataset with {df.shape[0]} rows and {df.shape[1]} columns.")
-        st.dataframe(df.head())
+        if df is not None:
+            st.session_state["data"] = df
+            st.success(f"✅ Loaded dataset with {df.shape[0]} rows and {df.shape[1]} columns.")
+            st.dataframe(df.head())
+    elif st.session_state["data"] is not None:
+        st.info("Using dataset from session memory.")
+        st.dataframe(st.session_state["data"].head())
     else:
         st.warning("Or use the sample dataset below.")
-        if st.button("Load Sample Dataset"):
+        if st.button("📘 Load Sample Dataset"):
             st.session_state["data"] = generate_sample_dataset()
             st.success("Sample dataset loaded successfully!")
 
@@ -174,7 +191,7 @@ elif page == "Upload Dataset":
 elif page == "Data Analysis":
     st.header("📊 Data Analysis & Visualization")
 
-    if "data" not in st.session_state:
+    if st.session_state["data"] is None:
         st.warning("Please upload or load data first.")
     else:
         df = st.session_state["data"]
@@ -192,8 +209,8 @@ elif page == "Data Analysis":
         ax.set_yticklabels(corr.columns)
         st.pyplot(fig)
 
-        st.subheader("Distribution of Microplastic Concentration")
         if "mp_conc" in df.columns:
+            st.subheader("Distribution of Microplastic Concentration")
             st.plotly_chart(px.histogram(df, x="mp_conc", nbins=20, title="Microplastic Concentration Distribution"))
 
 # --------------------------------------------------------------------------
@@ -202,7 +219,7 @@ elif page == "Data Analysis":
 elif page == "Prediction Dashboard":
     st.header("🤖 Prediction Dashboard")
 
-    if "data" not in st.session_state:
+    if st.session_state["data"] is None:
         st.warning("Upload or load dataset first.")
     else:
         df = st.session_state["data"]
@@ -221,11 +238,11 @@ elif page == "Prediction Dashboard":
         model = build_model_pipeline(num_cols, cat_cols, "rf" if clf_choice == "Random Forest" else "xgb")
 
         X_train, X_test, y_train, y_test = safe_train_test_split(X, y, test_size=test_size)
-
         model.fit(X_train, y_train)
         preds = model.predict(X_test)
 
         metrics = evaluate_model(y_test, preds)
+        st.session_state["metrics"] = metrics
         st.subheader("Model Performance")
         st.write(pd.DataFrame([metrics]))
 
@@ -235,7 +252,11 @@ elif page == "Prediction Dashboard":
 
         st.subheader("🌎 Risk Map")
         if "latitude" in df.columns and "longitude" in df.columns:
-            pred_df["color"] = pred_df["predicted_risk"].map({"Low": [0,255,0], "Medium": [255,165,0], "High": [255,0,0]})
+            pred_df["color"] = pred_df["predicted_risk"].map({
+                "Low": [0, 255, 0],
+                "Medium": [255, 165, 0],
+                "High": [255, 0, 0]
+            })
             st.pydeck_chart(pdk.Deck(
                 map_style="mapbox://styles/mapbox/light-v9",
                 initial_view_state=pdk.ViewState(latitude=0, longitude=0, zoom=1),
@@ -257,21 +278,15 @@ elif page == "Prediction Dashboard":
 elif page == "Reports":
     st.header("📑 Reports")
 
-    if "pred_df" not in st.session_state:
+    if st.session_state["pred_df"] is None:
         st.warning("Please run prediction first.")
     else:
         pred_df = st.session_state["pred_df"]
+        df = st.session_state["data"]
+        metrics = st.session_state["metrics"] or {}
         summary_text = "The predictive model has successfully classified pollution risk zones."
 
-        metrics = {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
-        if "data" in st.session_state:
-            df = st.session_state["data"]
-            _, target_col = make_risk_label(df)
-            if target_col in df.columns:
-                metrics = evaluate_model(pred_df["predicted_risk"], pred_df["predicted_risk"])
-
         col1, col2 = st.columns(2)
-
         with col1:
             excel_bytes = create_excel_report(df, pred_df)
             st.download_button(
@@ -280,7 +295,6 @@ elif page == "Reports":
                 file_name="microplastic_report.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
         with col2:
             pdf_bytes = create_pdf_report(summary_text, pred_df, metrics)
             st.download_button(
@@ -289,5 +303,4 @@ elif page == "Reports":
                 file_name="microplastic_report.pdf",
                 mime="application/pdf"
             )
-
         st.success("Reports generated successfully.")
