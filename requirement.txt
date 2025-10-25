@@ -2,7 +2,7 @@ streamlit
 pandas
 numpy
 scikit-learn
-matplotlib
+matplotlib==3.9.2
 plotly
 pydeck
 fpdf
