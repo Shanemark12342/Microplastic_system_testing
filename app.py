@@ -387,4 +387,4 @@ elif page == "Data Analysis":
         st.subheader("Time-series Trends (if temporal data is available)")
         if st.session_state['temporal_col'] and st.session_state['temporal_col'] in df.columns:
             try:
-                df[st.session_state['temporal_col']] = pd.to_datetime(df'['st.session_state['temporal_col']
+                df[st.session_state['temporal_col']] = pd.to_datetime(df st.session_state['temporal_col']
