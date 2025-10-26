@@ -538,18 +538,35 @@ elif page == "Prediction Dashboard":
                 map_df.dropna(subset=['latitude', 'longitude'], inplace=True)
 
             if 'latitude' in map_df.columns and 'longitude' in map_df.columns and not map_df.empty:
-                risk_color_map = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
+    risk_color_map = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
 
-                fig_map = px.scatter_mapbox(map_df,)
-                                            lat="latitude",
-                                            lon="longitude",
-                                            color="Predicted_Risk",
-                                            size_max=15, zoom=1,
-                                            hover_name=location_col if location_col else None,
-                                            hover_data={
-                                                "Predicted_Risk": True,
-                                                "True_Risk": True,
-                                                "latitude": ':.2f',
-                                                "longitude": ':.2f'
-                                            } if location_col else {"Predicted_Risk": True, "True_Risk": True, "latitude": ':.2f', "longitude": ':.2f'},
-                                            color_
+    fig_map = px.scatter_mapbox(
+        map_df,
+        lat="latitude",
+        lon="longitude",
+        color="Predicted_Risk",
+        color_discrete_map=risk_color_map,
+        size_max=15,
+        zoom=1,
+        hover_name=location_col if location_col else None,
+        hover_data={
+            "Predicted_Risk": True,
+            "True_Risk": True,
+            "latitude": ':.2f',
+            "longitude": ':.2f'
+        } if location_col else {
+            "Predicted_Risk": True,
+            "True_Risk": True,
+            "latitude": ':.2f',
+            "longitude": ':.2f'
+        }
+    )
+
+    fig_map.update_layout(
+        mapbox_style="carto-positron",
+        title="Geographical Distribution of Predicted Microplastic Risk",
+        margin={"r":0,"t":40,"l":0,"b":0}
+    )
+    st.plotly_chart(fig_map, use_container_width=True)
+else:
+    st.info("Latitude/Longitude data not available for mapping.")
