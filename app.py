@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
-from fpdf import FPDF # You'll need to install fpdf: pip install fpdf
+from fpdf import FPDF # You'll need to install fpdf2: pip install fpdf2
 
 # --- Configuration ---
 st.set_page_config(
@@ -66,7 +66,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- Helper Functions (Stubs for now) ---
+# --- Helper Functions ---
 
 def load_data(uploaded_file):
     """Loads data from CSV or Excel."""
@@ -98,48 +98,87 @@ def preprocess_data(df):
     st.write(f"- Removed {original_rows - df.shape[0]} duplicate rows.")
 
     # Example: Basic feature engineering (if 'location' column exists)
+    # This might not be needed if 'location' is just used for display
     if 'location' in df.columns:
-        df['location_encoded'] = df['location'].astype('category').cat.codes
-        st.write("- Encoded 'location' column.")
+        if not pd.api.types.is_numeric_dtype(df['location']):
+            df['location_encoded'] = df['location'].astype('category').cat.codes
+            st.write("- Encoded 'location' column to 'location_encoded'.")
 
     st.success("Preprocessing complete!")
     return df
 
-def train_model(df, target_column, features, model_type):
-    """Placeholder for model training."""
+def train_model(df_original, target_column, features, model_type):
+    """Trains a machine learning model and stores results in session state."""
+    df = df_original.copy() # Work on a copy of the dataframe
+
     if df is None or target_column not in df.columns or not features:
         st.error("Cannot train model. Please check data, target, and features.")
         return None, None, None
 
+    # Ensure all features are numeric for training
+    # For now, we'll only select numeric features already passed
     X = df[features]
+    
+    # Handle the target variable (y)
     y = df[target_column]
 
-    # Ensure target column is numerical for classification
+    # Store original unique labels for mapping and reporting
+    unique_labels = None
     if not pd.api.types.is_numeric_dtype(y):
         try:
-            y = pd.Categorical(y, categories=['Low', 'Medium', 'High'], ordered=True).codes
-            st.info(f"Target column '{target_column}' converted to numerical categories: 0=Low, 1=Medium, 2=High.")
-        except:
-            st.error(f"Could not convert target column '{target_column}' to numerical categories.")
+            unique_labels = sorted(y.unique().tolist()) # Get original unique labels here
+            st.session_state['unique_labels_map'] = {i: label for i, label in enumerate(unique_labels)} # Store for later
+            category_type = pd.CategoricalDtype(categories=unique_labels, ordered=True)
+            y = y.astype(category_type).cat.codes
+            st.info(f"Target column '{target_column}' converted to numerical categories: {st.session_state['unique_labels_map']}")
+        except Exception as e:
+            st.error(f"Could not convert target column '{target_column}' to numerical categories. Error: {e}")
             return None, None, None
+    else:
+        # If target is already numeric, ensure unique_labels_map is not set or handle as purely numeric
+        unique_labels = sorted(y.unique().tolist())
+        st.session_state['unique_labels_map'] = {label: label for label in unique_labels} # Map numeric to itself
 
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y if len(y.unique()) > 1 else None)
+    # Ensure y is a Pandas Series for the stratify logic to work correctly
+    if not isinstance(y, pd.Series):
+        y = pd.Series(y, index=X.index) # Maintain index if converting
+
+    # Check for number of unique classes after conversion
+    if len(y.unique()) <= 1:
+        st.warning(f"The target column '{target_column}' has only one unique class after preprocessing. Cannot perform stratified split.")
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=None)
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+
 
     model = None
     if model_type == "Random Forest":
         model = RandomForestClassifier(n_estimators=100, random_state=42)
     elif model_type == "XGBoost":
-        model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
+        objective_choice = 'multi:softmax' if len(y.unique()) > 2 else 'binary:logistic'
+        model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', objective=objective_choice, random_state=42)
 
     if model:
         model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
+        y_pred_numeric = model.predict(X_test)
 
-        accuracy = accuracy_score(y_test, y_pred)
-        precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
-        recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
-        f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+        # Convert numeric predictions and true labels back to original string labels
+        if unique_labels and isinstance(st.session_state.get('unique_labels_map'), dict) and any(isinstance(v, str) for v in st.session_state['unique_labels_map'].values()):
+            # Map back using the stored unique_labels_map values
+            y_pred_labels = pd.Series(y_pred_numeric).map(st.session_state['unique_labels_map']).values
+            y_test_labels = pd.Series(y_test).map(st.session_state['unique_labels_map']).values
+            target_names_for_report = unique_labels
+        else:
+            y_pred_labels = y_pred_numeric # Fallback for purely numeric targets
+            y_test_labels = y_test
+            target_names_for_report = [str(x) for x in sorted(np.unique(y_test))]
+
+
+        accuracy = accuracy_score(y_test, y_pred_numeric)
+        precision = precision_score(y_test, y_pred_numeric, average='weighted', zero_division=0)
+        recall = recall_score(y_test, y_pred_numeric, average='weighted', zero_division=0)
+        f1 = f1_score(y_test, y_pred_numeric, average='weighted', zero_division=0)
 
         st.success(f"Model '{model_type}' trained successfully!")
         st.write(f"**Model Performance:**")
@@ -148,16 +187,21 @@ def train_model(df, target_column, features, model_type):
         st.write(f"Recall: {recall:.2f}")
         st.write(f"F1-Score: {f1:.2f}")
 
-        # Store results for reporting
+        # Store results in session state
+        st.session_state['model'] = model
+        st.session_state['test_data'] = X_test # Keep X_test for display context
+        st.session_state['test_labels'] = y_test_labels # Store labels for display
+        st.session_state['predictions'] = y_pred_labels # Store labels for display
+
         st.session_state['model_report'] = {
             'model_type': model_type,
             'accuracy': accuracy,
             'precision': precision,
             'recall': recall,
             'f1_score': f1,
-            'classification_report': classification_report(y_test, y_pred, target_names=['Low', 'Medium', 'High'], output_dict=True)
+            'classification_report': classification_report(y_test, y_pred_numeric, target_names=target_names_for_report, output_dict=True)
         }
-        return model, X_test, y_test
+        return model, X_test, y_test_labels # Return labels for immediate use
     return None, None, None
 
 def generate_report(df, predictions, model_results, plot_buffer):
@@ -192,48 +236,60 @@ def generate_report(df, predictions, model_results, plot_buffer):
         pdf.set_font("Arial", "B", 12)
         pdf.cell(0, 7, "Classification Report:", 0, 1)
         pdf.set_font("Arial", "", 10)
-        for class_name, metrics in model_results['classification_report'].items():
-            if isinstance(metrics, dict): # For 'Low', 'Medium', 'High'
+        # Assuming the classification_report in model_results is already a dict
+        report_data = model_results['classification_report']
+
+        # Get target names in the correct order from session_state if available
+        target_names_ordered = list(st.session_state.get('unique_labels_map', {}).values())
+        if not target_names_ordered: # Fallback if map not present or numeric target
+            target_names_ordered = [k for k in report_data.keys() if k not in ['accuracy', 'macro avg', 'weighted avg']]
+            
+        for class_name in target_names_ordered:
+            if class_name in report_data and isinstance(report_data[class_name], dict):
+                metrics = report_data[class_name]
                 pdf.cell(0, 5, f"  {class_name}: Precision={metrics['precision']:.2f}, Recall={metrics['recall']:.2f}, F1-score={metrics['f1-score']:.2f}, Support={metrics['support']}", 0, 1)
-            else: # For 'accuracy', 'macro avg', 'weighted avg'
-                pdf.cell(0, 5, f"  {class_name}: {metrics:.2f}", 0, 1)
+        # Also print averages
+        for avg_type in ['macro avg', 'weighted avg']:
+            if avg_type in report_data and isinstance(report_data[avg_type], dict): # Check if it's a dict for metrics
+                 metrics = report_data[avg_type]
+                 pdf.cell(0, 5, f"  {avg_type.replace('_', ' ').title()}: Precision={metrics['precision']:.2f}, Recall={metrics['recall']:.2f}, F1-score={metrics['f1-score']:.2f}", 0, 1)
         pdf.ln(5)
+
 
     if plot_buffer:
         pdf.set_font("Arial", "B", 14)
         pdf.cell(0, 10, "3. Visualizations and Risk Map", 0, 1)
         pdf.ln(2)
-        # Assuming the plot buffer contains a PNG image
-        pdf.image(plot_buffer, x=10, y=pdf.get_y(), w=190)
-        pdf.ln(10)
+        # Add the image from the buffer
+        # Ensure the image fits within the PDF page width (e.g., 190mm if page width is 210mm)
+        pdf.image(BytesIO(plot_buffer), x=10, y=pdf.get_y(), w=190)
+        pdf.ln(10) # Adjust line break after image
+
 
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "4. Identified High-Risk Zones & Mitigation Strategies", 0, 1)
     pdf.set_font("Arial", "", 12)
-    # This part would require more sophisticated logic to identify actual high-risk zones from predictions
     pdf.multi_cell(0, 7, "Based on the predictions, high-risk zones (e.g., coordinates X, Y or specific locations A, B) are identified in areas with high industrial discharge and dense population. Suggested mitigation strategies include enhanced waste management, public awareness campaigns, and stricter industrial regulations.")
     pdf.ln(10)
 
-    return pdf.output(dest='S').encode('latin-1') # Return as bytes
+    return pdf.output(dest='S').encode('latin-1')
 
 
 # --- Initialize Session State ---
-if 'df' not in st.session_state:
-    st.session_state['df'] = None
-if 'processed_df' not in st.session_state:
-    st.session_state['processed_df'] = None
-if 'model' not in st.session_state:
-    st.session_state['model'] = None
-if 'predictions' not in st.session_state:
-    st.session_state['predictions'] = None
-if 'test_data' not in st.session_state:
-    st.session_state['test_data'] = None
-if 'test_labels' not in st.session_state:
-    st.session_state['test_labels'] = None
-if 'model_report' not in st.session_state:
-    st.session_state['model_report'] = None
-if 'uploaded_filename' not in st.session_state:
-    st.session_state['uploaded_filename'] = "No file uploaded"
+# Initialize all session state variables to None or appropriate defaults
+if 'df' not in st.session_state: st.session_state['df'] = None
+if 'processed_df' not in st.session_state: st.session_state['processed_df'] = None
+if 'model' not in st.session_state: st.session_state['model'] = None
+if 'predictions' not in st.session_state: st.session_state['predictions'] = None
+if 'test_data' not in st.session_state: st.session_state['test_data'] = None
+if 'test_labels' not in st.session_state: st.session_state['test_labels'] = None
+if 'model_report' not in st.session_state: st.session_state['model_report'] = None
+if 'uploaded_filename' not in st.session_state: st.session_state['uploaded_filename'] = "No file uploaded"
+if 'location_col' not in st.session_state: st.session_state['location_col'] = None
+if 'pollution_indicators' not in st.session_state: st.session_state['pollution_indicators'] = []
+if 'temporal_col' not in st.session_state: st.session_state['temporal_col'] = None
+if 'risk_map_plot_buffer' not in st.session_state: st.session_state['risk_map_plot_buffer'] = None
+if 'unique_labels_map' not in st.session_state: st.session_state['unique_labels_map'] = {}
 
 
 # --- Sidebar Navigation ---
@@ -246,20 +302,27 @@ page = st.sidebar.radio(
 st.sidebar.subheader("Input Variables (Global)")
 if st.session_state['processed_df'] is not None:
     all_columns = st.session_state['processed_df'].columns.tolist()
-    location_col = st.sidebar.selectbox("Select Location Column", ['None'] + all_columns, key='sidebar_location')
-    pollution_indicators = st.sidebar.multiselect("Select Pollution Indicators", all_columns, key='sidebar_indicators')
-    temporal_col = st.sidebar.selectbox("Select Temporal Column", ['None'] + all_columns, key='sidebar_temporal')
+    
+    # Filter out columns that are primarily identifiers or non-numeric for pollution indicators
+    suggested_pollution_cols = [col for col in all_columns if pd.api.types.is_numeric_dtype(st.session_state['processed_df'][col]) and col not in ['latitude', 'longitude']]
 
-    if location_col != 'None':
-        st.session_state['location_col'] = location_col
-    else:
-        st.session_state['location_col'] = None
+    location_col_options = ['None'] + [col for col in all_columns if st.session_state['processed_df'][col].nunique() < 100 or not pd.api.types.is_numeric_dtype(st.session_state['processed_df'][col])]
+    location_col_index = 0
+    if st.session_state['location_col'] in location_col_options:
+        location_col_index = location_col_options.index(st.session_state['location_col'])
+    location_col = st.sidebar.selectbox("Select Location Column (for map/hover)", location_col_options, key='sidebar_location', index=location_col_index)
+    
+    pollution_indicators = st.sidebar.multiselect("Select Pollution Indicators", suggested_pollution_cols, default=st.session_state['pollution_indicators'] if st.session_state['pollution_indicators'] else [], key='sidebar_indicators')
+    
+    temporal_col_options = ['None'] + [col for col in all_columns if pd.api.types.is_datetime64_any_dtype(st.session_state['processed_df'][col]) or pd.api.types.is_string_dtype(st.session_state['processed_df'][col])] # Allow string for potential conversion
+    temporal_col_index = 0
+    if st.session_state['temporal_col'] in temporal_col_options:
+        temporal_col_index = temporal_col_options.index(st.session_state['temporal_col'])
+    temporal_col = st.sidebar.selectbox("Select Temporal Column", temporal_col_options, key='sidebar_temporal', index=temporal_col_index)
 
+    st.session_state['location_col'] = location_col if location_col != 'None' else None
     st.session_state['pollution_indicators'] = pollution_indicators
-    if temporal_col != 'None':
-        st.session_state['temporal_col'] = temporal_col
-    else:
-        st.session_state['temporal_col'] = None
+    st.session_state['temporal_col'] = temporal_col if temporal_col != 'None' else None
 else:
     st.sidebar.info("Upload a dataset first to select variables.")
 
@@ -268,7 +331,8 @@ else:
 
 if page == "Home":
     st.title("Welcome to the Microplastic Pollution Risk Assessment System")
-    st.image("https://via.placeholder.com/700x300.png?text=Environmental+Sustainability", use_column_width=True) # Placeholder image
+    # Using an actual image from Unsplash for better visual appeal
+    st.image("https://images.unsplash.com/photo-1596499870503-452f1e403d7c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80", caption="Sustainable Oceans", use_column_width=True)
     st.markdown("""
         <p style='font-size: 1.1em;'>
         This platform leverages advanced predictive analytics to assess and visualize the risk levels of microplastic pollution across various environments.
@@ -333,13 +397,13 @@ elif page == "Data Analysis":
         st.subheader("Correlation Matrix")
         # Select only numeric columns for correlation
         numeric_df = df.select_dtypes(include=np.number)
-        if not numeric_df.empty:
+        if not numeric_df.empty and len(numeric_df.columns) > 1: # Ensure at least two numeric columns
             fig_corr = px.imshow(numeric_df.corr(), text_auto=True, aspect="auto",
                                  color_continuous_scale=px.colors.sequential.Plasma,
                                  title="Correlation Matrix of Numerical Features")
             st.plotly_chart(fig_corr, use_container_width=True)
         else:
-            st.info("No numeric columns found for correlation analysis.")
+            st.info("Not enough numeric columns found for correlation analysis.")
 
         st.subheader("Time-series Trends (if temporal data is available)")
         if st.session_state['temporal_col'] and st.session_state['temporal_col'] in df.columns:
@@ -365,152 +429,144 @@ elif page == "Prediction Dashboard":
     st.title("Prediction Dashboard")
 
     if st.session_state['processed_df'] is not None:
-        df = st.session_state['processed_df']
+        df = st.session_state['processed_df'].copy() # Use a copy to avoid modifying original
 
         st.subheader("Model Configuration")
         target_column_options = df.columns.tolist()
-        # Filter out potential ID columns or non-numeric for target
-        target_column_options = [col for col in target_column_options if df[col].nunique() <= 5 or not pd.api.types.is_numeric_dtype(df[col])]
+        # Filter out potential ID columns or non-numeric for target, focusing on low cardinality
+        target_column_options = [col for col in target_column_options if df[col].nunique() <= 10 or not pd.api.types.is_numeric_dtype(df[col])]
         target_column = st.selectbox("Select Target Variable (e.g., 'Risk_Level')", target_column_options)
 
-        # Automatically exclude target column from features list
-        available_features = [col for col in df.columns if col != target_column and col != st.session_state.get('location_col') and col != st.session_state.get('temporal_col')]
-        feature_columns = st.multiselect("Select Features for Prediction", available_features, default=available_features)
+        # Automatically exclude target, location, and temporal columns from features list
+        available_features = [col for col in df.columns if col != target_column
+                              and col != st.session_state.get('location_col')
+                              and col != st.session_state.get('temporal_col')
+                              and not pd.api.types.is_datetime64_any_dtype(df[col])] # Exclude datetime
+        # Filter features to include only numeric ones for ML models (simplification)
+        numeric_features = df[available_features].select_dtypes(include=np.number).columns.tolist()
+        feature_columns = st.multiselect("Select Features for Prediction (Numeric Recommended)", numeric_features, default=numeric_features)
+
 
         model_type = st.radio("Choose Prediction Model", ["Random Forest", "XGBoost"])
 
         if st.button("Train Model & Generate Predictions"):
             if target_column and feature_columns:
                 with st.spinner(f"Training {model_type} model..."):
-                    model, X_test, y_test = train_model(df.copy(), target_column, feature_columns, model_type)
+                    # Call train_model, which now stores results directly in session_state
+                    model, X_test, y_test_labels = train_model(df, target_column, feature_columns, model_type)
+
                     if model:
-                        st.session_state['model'] = model
-                        st.session_state['test_data'] = X_test
-                        st.session_state['test_labels'] = y_test
-
-                        # Convert predictions back to labels for display if target was categorical
-                        raw_predictions = model.predict(X_test)
-                        if pd.api.types.is_numeric_dtype(df[target_column]): # If target was originally numeric
-                             st.session_state['predictions'] = raw_predictions # Keep as numeric
-                        else: # If target was categorical (converted to 0,1,2)
-                             # Create a mapping from numeric to original labels
-                             unique_labels = sorted(df[target_column].unique())
-                             label_mapping = {i: label for i, label in enumerate(unique_labels)}
-                             st.session_state['predictions'] = pd.Series(raw_predictions).map(label_mapping).values
-
                         st.success("Model trained and predictions generated!")
                     else:
                         st.error("Model training failed. Please check your selections.")
             else:
                 st.warning("Please select a target variable and at least one feature.")
 
+        # --- Display Predictions and Visualizations ---
         if st.session_state['model'] is not None and st.session_state['predictions'] is not None:
-            st.subheader("Prediction Results")
+            st.subheader("Prediction Results & Dashboard")
 
-            # Create a dataframe for displaying predictions
-            prediction_df = pd.DataFrame(st.session_state['test_data'], columns=st.session_state['test_data'].columns)
-            prediction_df['True_Risk'] = st.session_state['test_labels']
-            prediction_df['Predicted_Risk'] = st.session_state['predictions']
+            # 1. Prediction Sample Table
+            st.markdown("#### Sample of Predicted Risks")
+            prediction_display_df = pd.DataFrame(st.session_state['test_data'].copy())
+            prediction_display_df['True_Risk'] = st.session_state['test_labels']
+            prediction_display_df['Predicted_Risk'] = st.session_state['predictions']
+            st.dataframe(prediction_display_df.head(10)) # Show top 10 predictions
 
-            st.write("Sample Predictions:")
-            st.dataframe(prediction_df.head())
 
-            st.subheader("Risk Map (Geographic Heatmap)")
-            if st.session_state.get('location_col') and 'latitude' in df.columns and 'longitude' in df.columns: # Assuming lat/lon exist
-                # For visualization, we'll use the original dataframe but add predictions
-                # This part is complex and needs to map test data back to original locations
-                # For simplicity, let's create a dummy location and risk for demonstration
-                plot_df = df.copy()
-                plot_df['predicted_risk_level'] = np.random.choice(['Low', 'Medium', 'High'], size=len(plot_df)) # Placeholder
+            # 2. Risk Distribution Bar Chart
+            st.markdown("#### Predicted Risk Distribution")
+            predicted_risk_counts = pd.Series(st.session_state['predictions']).value_counts()
+            # Ensure consistent order for risk levels if they are categorical
+            risk_level_order = ['Low', 'Medium', 'High'] # Define expected order
+            predicted_risk_counts = predicted_risk_counts.reindex(risk_level_order).fillna(0) # Reindex and fill missing with 0
 
-                # Map risk levels to colors
-                risk_color_map = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
-                plot_df['color'] = plot_df['predicted_risk_level'].map(risk_color_map)
+            fig_risk_dist = px.bar(predicted_risk_counts,
+                                   x=predicted_risk_counts.index,
+                                   y=predicted_risk_counts.values,
+                                   labels={'x': 'Risk Level', 'y': 'Number of Sites'},
+                                   color=predicted_risk_counts.index,
+                                   color_discrete_map={'Low': 'green', 'Medium': 'orange', 'High': 'red'},
+                                   title="Distribution of Predicted Risk Levels")
+            st.plotly_chart(fig_risk_dist, use_container_width=True)
 
-                fig_map = px.scatter_mapbox(plot_df,
-                                            lat="latitude", # Assuming 'latitude' and 'longitude' columns
-                                            lon="longitude",
-                                            color="predicted_risk_level",
-                                            size_max=15, zoom=3,
-                                            hover_name=st.session_state['location_col'] if st.session_state['location_col'] else None,
-                                            hover_data=st.session_state['pollution_indicators'] + ['predicted_risk_level'] if st.session_state['pollution_indicators'] else ['predicted_risk_level'],
-                                            color_discrete_map=risk_color_map,
-                                            title="Microplastic Pollution Risk Map")
-                fig_map.update_layout(mapbox_style="open-street-map")
-                fig_map.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
-                st.plotly_chart(fig_map, use_container_width=True)
 
-                # Save the plot to a buffer for PDF report
-                buf = BytesIO()
-                fig_map.write_image(buf, format="png", width=800, height=450, scale=2)
-                st.session_state['risk_map_plot_buffer'] = buf.getvalue()
-            else:
-                st.warning("To view the risk map, ensure your dataset has 'latitude' and 'longitude' columns and a location column is selected in the sidebar.")
-                st.session_state['risk_map_plot_buffer'] = None
+            # 3. Geographic Heatmap (Risk Map)
+            st.markdown("#### Microplastic Pollution Risk Map")
+            location_col = st.session_state.get('location_col')
 
-            st.subheader("Model Accuracy Scorecard")
-            if st.session_state['model_report']:
-                st.markdown(f"""
-                - **Model Type:** {st.session_state['model_report']['model_type']}
-                - **Overall Accuracy:** <span style='color: #007bff; font-weight: bold;'>{st.session_state['model_report']['accuracy']:.2f}</span>
-                - **Weighted Precision:** {st.session_state['model_report']['precision']:.2f}
-                - **Weighted Recall:** {st.session_state['model_report']['recall']:.2f}
-                - **Weighted F1-Score:** {st.session_state['model_report']['f1_score']:.2f}
-                """, unsafe_allow_html=True)
-                st.write("Classification Report:")
-                st.json(st.session_state['model_report']['classification_report'])
-            else:
-                st.info("Train the model first to see the scorecard.")
+            # Create a DataFrame for mapping that combines X_test (features) with predictions
+            map_df = st.session_state['test_data'].copy()
+            map_df['Predicted_Risk'] = st.session_state['predictions']
+            map_df['True_Risk'] = st.session_state['test_labels']
 
-    else:
-        st.warning("Please upload and preprocess a dataset on the 'Upload Dataset' page first.")
-
-elif page == "Reports":
-    st.title("Generate & Download Reports")
-
-    if st.session_state['processed_df'] is not None and st.session_state['model'] is not None and st.session_state['predictions'] is not None:
-        st.write("Generate comprehensive reports based on your analysis and predictions.")
-
-        if st.button("Generate PDF Report"):
-            with st.spinner("Generating PDF report..."):
-                pdf_output = generate_report(
-                    st.session_state['processed_df'],
-                    st.session_state['predictions'],
-                    st.session_state['model_report'],
-                    st.session_state.get('risk_map_plot_buffer')
-                )
-                st.download_button(
-                    label="Download PDF Report",
-                    data=pdf_output,
-                    file_name="microplastic_risk_report.pdf",
-                    mime="application/pdf"
-                )
-                st.success("PDF report generated and ready for download!")
-
-        if st.button("Generate Excel Report (Raw Data & Predictions)"):
-            with st.spinner("Generating Excel report..."):
-                # Prepare data for Excel
-                if st.session_state['test_data'] is not None:
-                    report_df = pd.DataFrame(st.session_state['test_data'])
-                    report_df['True_Risk'] = st.session_state['test_labels']
-                    report_df['Predicted_Risk'] = st.session_state['predictions']
-
-                    # Save to Excel
-                    excel_buffer = BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                        report_df.to_excel(writer, sheet_name='Predictions', index=False)
-                        st.session_state['processed_df'].to_excel(writer, sheet_name='Original Data', index=False)
-                        # You can add more sheets with descriptive stats or model metrics if needed
-
-                    st.download_button(
-                        label="Download Excel Report",
-                        data=excel_buffer.getvalue(),
-                        file_name="microplastic_risk_data_and_predictions.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    st.success("Excel report generated and ready for download!")
+            # --- Robust way to get Lat/Lon for the test set ---
+            # Try to merge with the original processed_df using the index
+            # This assumes your processed_df still has the original index from before train_test_split
+            if ('latitude' in df.columns and 'longitude' in df.columns):
+                # If X_test inherited original indices, merge directly
+                if map_df.index.isin(df.index).all():
+                    # Ensure df has the columns before attempting to select them
+                    cols_to_merge = ['latitude', 'longitude']
+                    if location_col and location_col in df.columns:
+                        cols_to_merge.append(location_col)
+                    map_df = map_df.merge(df[cols_to_merge], left_index=True, right_index=True, how='left')
                 else:
-                    st.warning("No prediction data available for Excel report.")
+                    st.warning("Original DataFrame index not fully preserved in test set. Attempting to add lat/lon from original df based on available features (less reliable).")
+                    # Fallback: Merge on available columns if index merge fails or is not applicable
+                    merge_cols = [col for col in map_df.columns if col in df.columns and col not in ['Predicted_Risk', 'True_Risk']]
+                    if merge_cols:
+                        cols_to_get = ['latitude', 'longitude']
+                        if location_col and location_col in df.columns:
+                            cols_to_get.append(location_col)
+                        
+                        df_for_merge = df[cols_to_get + merge_cols].drop_duplicates()
+                        map_df = map_df.merge(df_for_merge, on=merge_cols, how='left', suffixes=('', '_df'))
+                        
+                        # Handle potential duplicate columns after merge
+                        for c in ['latitude', 'longitude']:
+                            if f'{c}_df' in map_df.columns:
+                                map_df[c] = map_df[c].fillna(map_df[f'{c}_df'])
+                                map_df = map_df.drop(columns=[f'{c}_df'])
+                        if location_col and f'{location_col}_df' in map_df.columns:
+                             map_df[location_col] = map_df[location_col].fillna(map_df[f'{location_col}_df'])
+                             map_df = map_df.drop(columns=[f'{location_col}_df'])
+                    else:
+                        st.error("Cannot merge for latitude/longitude without common columns between test data and original data.")
 
-    else:
-        st.warning("Please upload a dataset, run data analysis, and train a model before generating reports.")
+                # Drop rows where latitude or longitude are still missing after merge attempts
+                map_df.dropna(subset=['latitude', 'longitude'], inplace=True)
+
+            if 'latitude' in map_df.columns and 'longitude' in map_df.columns and not map_df.empty:
+    risk_color_map = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
+
+    fig_map = px.scatter_mapbox(
+        map_df,
+        lat="latitude",
+        lon="longitude",
+        color="Predicted_Risk",
+        color_discrete_map=risk_color_map,
+        size_max=15,
+        zoom=1,
+        hover_name=location_col if location_col else None,
+        hover_data={
+            "Predicted_Risk": True,
+            "True_Risk": True,
+            "latitude": ':.2f',
+            "longitude": ':.2f'
+        } if location_col else {
+            "Predicted_Risk": True,
+            "True_Risk": True,
+            "latitude": ':.2f',
+            "longitude": ':.2f'
+        }
+    )
+
+    fig_map.update_layout(
+        mapbox_style="carto-positron",
+        title="Geographical Distribution of Predicted Microplastic Risk",
+        margin={"r":0,"t":40,"l":0,"b":0}
+    )
+    st.plotly_chart(fig_map, use_container_width=True)
+else:
+    st.info("Latitude/Longitude data not available for mapping.")
