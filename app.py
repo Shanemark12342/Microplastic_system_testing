@@ -565,8 +565,10 @@ elif page == "Prediction Dashboard":
     fig_map.update_layout(
         mapbox_style="carto-positron",
         title="Geographical Distribution of Predicted Microplastic Risk",
-        margin={"r":0,"t":40,"l":0,"b":0}
+        margin={"r": 0, "t": 40, "l": 0, "b": 0}
     )
     st.plotly_chart(fig_map, use_container_width=True)
+
 else:
     st.info("Latitude/Longitude data not available for mapping.")
+
