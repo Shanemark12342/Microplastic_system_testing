@@ -1,42 +1,41 @@
-# app.py
-"""
-Microplastic Risk Prediction Dashboard
-Streamlit-based predictive analytics system for assessing microplastic pollution risk.
-"""
+# ============================================================
+# File: app.py
+# Microplastic Pollution Risk Prediction Dashboard
+# ============================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import plotly.express as px
-import pydeck as pdk
+import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from fpdf import FPDF
-from io import BytesIO
-import warnings
+import io
 
-warnings.filterwarnings("ignore")
+# ============================================================
+# --- Streamlit Configuration ---
+# ============================================================
+st.set_page_config(page_title="Microplastic Risk Prediction", layout="wide")
 
-# --------------------------------------------------------------------------
-# Initialize session state
-# --------------------------------------------------------------------------
-if "data" not in st.session_state:
-    st.session_state["data"] = None
-if "pred_df" not in st.session_state:
-    st.session_state["pred_df"] = None
-if "metrics" not in st.session_state:
-    st.session_state["metrics"] = None
+st.title("🌍 Microplastic Pollution Risk Prediction Dashboard")
+st.sidebar.title("🔧 Navigation")
 
-# --------------------------------------------------------------------------
-# Utility Functions
-# --------------------------------------------------------------------------
+# ============================================================
+# --- Initialize session state (persistent data across pages) ---
+# ============================================================
+for key in ["data", "pred_df", "metrics"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
+# ============================================================
+# --- Utility Functions ---
+# ============================================================
 @st.cache_data
 def load_data(file):
+    """Load CSV/Excel and standardize column names."""
     if file.name.endswith(".csv"):
         df = pd.read_csv(file)
     elif file.name.endswith(".xlsx"):
@@ -44,55 +43,63 @@ def load_data(file):
     else:
         st.error("Unsupported file format. Please upload CSV or Excel file.")
         return None
+
+    df.columns = [c.strip() for c in df.columns]
+
+    rename_map = {}
+    for col in df.columns:
+        c = col.lower()
+        if "dominant_risk_type" in c:
+            rename_map[col] = "risk"
+        elif "mp_count" in c or "microplastic" in c or "mp_conc" in c:
+            rename_map[col] = "mp_conc"
+
+    df.rename(columns=rename_map, inplace=True)
     return df
 
 
-def generate_sample_dataset(n=200, seed=42):
-    np.random.seed(seed)
+def generate_sample_dataset():
+    np.random.seed(42)
     df = pd.DataFrame({
-        "latitude": np.random.uniform(-90, 90, n),
-        "longitude": np.random.uniform(-180, 180, n),
-        "pH": np.random.uniform(6, 9, n),
-        "turbidity": np.random.uniform(0, 100, n),
-        "population_density": np.random.uniform(50, 5000, n),
-        "mp_conc": np.random.uniform(0, 50, n)
+        "Latitude": np.random.uniform(-10, 10, 100),
+        "Longitude": np.random.uniform(100, 120, 100),
+        "pH": np.random.uniform(6, 9, 100),
+        "Turbidity": np.random.uniform(1, 10, 100),
+        "Population_Density": np.random.uniform(100, 10000, 100),
+        "MP_Count (items/individual)": np.random.uniform(5, 100, 100),
+        "Dominant_Risk_Type": np.random.choice(["Low", "Medium", "High"], 100)
     })
-    df["risk"] = pd.cut(df["mp_conc"], bins=[-1, 10, 30, 100], labels=["Low", "Medium", "High"])
     return df
-
-
-def auto_preprocess(df: pd.DataFrame):
-    df = df.copy()
-    df.fillna(df.mean(numeric_only=True), inplace=True)
-    num_cols = df.select_dtypes(include=np.number).columns.tolist()
-    cat_cols = df.select_dtypes(exclude=np.number).columns.tolist()
-    return df, num_cols, cat_cols
 
 
 def make_risk_label(df):
-    """Auto-detect target column or create synthetic"""
+    """Auto-detect or create a risk label from available columns."""
+    colnames = [c.lower() for c in df.columns]
+
     if "risk" in df.columns:
         y = df["risk"]
         target_col = "risk"
-    else:
-        if "mp_conc" not in df.columns:
-            st.error("Dataset must include either 'risk' or 'mp_conc' column.")
-            st.stop()
-        y = pd.cut(df["mp_conc"], bins=[-1, 10, 30, 100], labels=["Low", "Medium", "High"])
+    elif "mp_conc" in df.columns:
+        y = pd.cut(df["mp_conc"], bins=[-1, 10, 30, 100],
+                   labels=["Low", "Medium", "High"])
         target_col = "mp_conc"
+    else:
+        matched = [c for c in colnames if "dominant" in c or "mp_count" in c]
+        if matched:
+            st.warning(f"⚠️ Column '{matched[0]}' recognized but renamed internally.")
+            df.rename(columns={matched[0]: "mp_conc"}, inplace=True)
+            y = pd.cut(df["mp_conc"], bins=[-1, 10, 30, 100],
+                       labels=["Low", "Medium", "High"])
+            target_col = "mp_conc"
+        else:
+            st.error("Dataset must contain 'Dominant_Risk_Type' or 'MP_Count (items/individual)'.")
+            st.stop()
+
     return y, target_col
 
 
-def build_model_pipeline(num_cols, cat_cols, clf_choice="rf"):
-    if clf_choice == "rf":
-        model = RandomForestClassifier(n_estimators=200, random_state=42)
-    else:
-        model = XGBClassifier(use_label_encoder=False, eval_metric="mlogloss", random_state=42)
-    return model
-
-
 def safe_train_test_split(X, y, test_size=0.2, random_state=42):
-    """Safely split data; fallback to non-stratified if class imbalance"""
+    """Safe stratified split with fallback."""
     from sklearn.model_selection import train_test_split
     try:
         return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
@@ -101,73 +108,58 @@ def safe_train_test_split(X, y, test_size=0.2, random_state=42):
         return train_test_split(X, y, test_size=test_size, random_state=random_state)
 
 
-def evaluate_model(y_true, y_pred):
-    return {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "precision": precision_score(y_true, y_pred, average="weighted", zero_division=0),
-        "recall": recall_score(y_true, y_pred, average="weighted", zero_division=0),
-        "f1": f1_score(y_true, y_pred, average="weighted", zero_division=0),
-    }
-
-
-def create_pdf_report(summary_text, pred_df, metrics):
+def generate_pdf_report(metrics, high_risk_sites):
+    """Generate PDF summary report."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Microplastic Pollution Risk Report", ln=True, align="C")
-    pdf.ln(10)
+    pdf.cell(200, 10, "Microplastic Risk Assessment Report", ln=True, align="C")
+
     pdf.set_font("Arial", "", 12)
-    pdf.multi_cell(0, 10, summary_text)
-    pdf.ln(10)
-    pdf.cell(0, 10, "Model Metrics:", ln=True)
+    pdf.cell(200, 10, "", ln=True)
+    pdf.cell(200, 10, "Model Performance Metrics:", ln=True)
     for k, v in metrics.items():
-        pdf.cell(0, 10, f"{k.capitalize()}: {v:.3f}", ln=True)
-    buffer = BytesIO()
-    pdf.output(buffer)
-    return buffer.getvalue()
+        pdf.cell(200, 10, f"{k}: {v:.2f}", ln=True)
 
+    pdf.cell(200, 10, "", ln=True)
+    pdf.cell(200, 10, "High-Risk Zones Identified:", ln=True)
+    for _, row in high_risk_sites.iterrows():
+        pdf.cell(200, 10, f"Lat: {row['Latitude']}, Lon: {row['Longitude']}", ln=True)
 
-def create_excel_report(df, pred_df):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Original Data")
-        pred_df.to_excel(writer, index=False, sheet_name="Predictions")
-    return output.getvalue()
+    pdf_bytes = pdf.output(dest="S").encode("latin-1")
+    return pdf_bytes
 
-
-# --------------------------------------------------------------------------
-# Streamlit UI
-# --------------------------------------------------------------------------
-st.set_page_config(page_title="Microplastic Risk Dashboard", layout="wide")
-
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Home", "Upload Dataset", "Data Analysis", "Prediction Dashboard", "Reports"])
+# ============================================================
+# --- Sidebar Navigation ---
+# ============================================================
+menu = st.sidebar.radio(
+    "Navigate to:",
+    ["🏠 Home", "📤 Upload Dataset", "📊 Data Analysis", "🤖 Prediction Dashboard", "📈 Reports"]
+)
 
 if st.sidebar.button("🔄 Reset Session"):
     for key in ["data", "pred_df", "metrics"]:
         st.session_state[key] = None
     st.experimental_rerun()
 
-st.sidebar.markdown("---")
-st.sidebar.caption("🌊 Environmental Microplastic Risk Analyzer")
-
-# --------------------------------------------------------------------------
-# Home
-# --------------------------------------------------------------------------
-if page == "Home":
-    st.title("🌍 Microplastic Pollution Risk Assessment Dashboard")
-    st.markdown("""
-    This system predicts microplastic pollution risk (Low / Medium / High)
-    based on environmental indicators using **Random Forest** and **XGBoost** models.
+# ============================================================
+# --- Page 1: Home ---
+# ============================================================
+if menu == "🏠 Home":
+    st.header("Welcome to the Microplastic Pollution Risk Prediction System")
+    st.write("""
+    This platform analyzes environmental datasets to predict and visualize microplastic pollution risks.
+    Upload your dataset or use a sample to explore:
+    - Statistical data analysis  
+    - Predictive modeling using Random Forest / XGBoost  
+    - Risk visualization and downloadable reports  
     """)
-    st.image("https://images.unsplash.com/photo-1507525428034-b723cf961d3e", use_container_width=True)
-    st.info("Navigate using the sidebar to upload data, analyze, and predict risks.")
 
-# --------------------------------------------------------------------------
-# Upload Dataset
-# --------------------------------------------------------------------------
-elif page == "Upload Dataset":
-    st.header("📤 Upload Environmental Dataset")
+# ============================================================
+# --- Page 2: Upload Dataset ---
+# ============================================================
+elif menu == "📤 Upload Dataset":
+    st.header("Upload Your Dataset")
     uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
 
     if uploaded_file is not None:
@@ -185,122 +177,104 @@ elif page == "Upload Dataset":
             st.session_state["data"] = generate_sample_dataset()
             st.success("Sample dataset loaded successfully!")
 
-# --------------------------------------------------------------------------
-# Data Analysis
-# --------------------------------------------------------------------------
-elif page == "Data Analysis":
-    st.header("📊 Data Analysis & Visualization")
-
+# ============================================================
+# --- Page 3: Data Analysis ---
+# ============================================================
+elif menu == "📊 Data Analysis":
+    st.header("Data Exploration and Visualization")
     if st.session_state["data"] is None:
-        st.warning("Please upload or load data first.")
+        st.warning("Please upload a dataset first.")
     else:
         df = st.session_state["data"]
         st.subheader("Descriptive Statistics")
-        st.write(df.describe())
+        st.dataframe(df.describe())
 
         st.subheader("Correlation Heatmap")
+        numeric_df = df.select_dtypes(include=[np.number])
         fig, ax = plt.subplots()
-        corr = df.select_dtypes(include=np.number).corr()
-        im = ax.imshow(corr, cmap="coolwarm")
-        plt.colorbar(im)
-        ax.set_xticks(range(len(corr.columns)))
-        ax.set_xticklabels(corr.columns, rotation=45, ha="right")
-        ax.set_yticks(range(len(corr.columns)))
-        ax.set_yticklabels(corr.columns)
+        im = ax.imshow(numeric_df.corr(), cmap="coolwarm")
+        ax.set_xticks(range(len(numeric_df.columns)))
+        ax.set_xticklabels(numeric_df.columns, rotation=90)
+        ax.set_yticks(range(len(numeric_df.columns)))
+        ax.set_yticklabels(numeric_df.columns)
         st.pyplot(fig)
 
-        if "mp_conc" in df.columns:
-            st.subheader("Distribution of Microplastic Concentration")
-            st.plotly_chart(px.histogram(df, x="mp_conc", nbins=20, title="Microplastic Concentration Distribution"))
-
-# --------------------------------------------------------------------------
-# Prediction Dashboard
-# --------------------------------------------------------------------------
-elif page == "Prediction Dashboard":
-    st.header("🤖 Prediction Dashboard")
-
+# ============================================================
+# --- Page 4: Prediction Dashboard ---
+# ============================================================
+elif menu == "🤖 Prediction Dashboard":
+    st.header("Predictive Modeling and Risk Classification")
     if st.session_state["data"] is None:
-        st.warning("Upload or load dataset first.")
+        st.warning("Please upload or load data first.")
     else:
-        df = st.session_state["data"]
-
-        test_size = st.sidebar.slider("Test Size", 0.1, 0.5, 0.2, 0.05)
-        clf_choice = st.sidebar.selectbox("Model", ["Random Forest", "XGBoost"])
-
-        df, num_cols, cat_cols = auto_preprocess(df)
+        df = st.session_state["data"].copy()
         y, target_col = make_risk_label(df)
 
-        if len(set(y)) < 2:
-            st.error("Not enough unique risk classes to train model.")
-            st.stop()
+        X = df.select_dtypes(include=[np.number])
+        X_train, X_test, y_train, y_test = safe_train_test_split(X, y)
 
-        X = df[num_cols]
-        model = build_model_pipeline(num_cols, cat_cols, "rf" if clf_choice == "Random Forest" else "xgb")
+        model_choice = st.radio("Select Model:", ["Random Forest", "XGBoost"], horizontal=True)
 
-        X_train, X_test, y_train, y_test = safe_train_test_split(X, y, test_size=test_size)
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
+        if st.button("Train Model"):
+            with st.spinner("Training model..."):
+                if model_choice == "Random Forest":
+                    model = RandomForestClassifier(random_state=42)
+                else:
+                    model = XGBClassifier(use_label_encoder=False, eval_metric="mlogloss", random_state=42)
+                model.fit(X_train, y_train)
 
-        metrics = evaluate_model(y_test, preds)
-        st.session_state["metrics"] = metrics
-        st.subheader("Model Performance")
-        st.write(pd.DataFrame([metrics]))
+                y_pred = model.predict(X_test)
+                metrics = {
+                    "Accuracy": accuracy_score(y_test, y_pred),
+                    "Precision": precision_score(y_test, y_pred, average="macro"),
+                    "Recall": recall_score(y_test, y_pred, average="macro"),
+                    "F1-score": f1_score(y_test, y_pred, average="macro"),
+                }
+                st.session_state["metrics"] = metrics
 
-        pred_df = X_test.copy()
-        pred_df["predicted_risk"] = preds
-        st.session_state["pred_df"] = pred_df
+                st.subheader("Model Performance")
+                st.write(metrics)
 
-        st.subheader("🌎 Risk Map")
-        if "latitude" in df.columns and "longitude" in df.columns:
-            pred_df["color"] = pred_df["predicted_risk"].map({
-                "Low": [0, 255, 0],
-                "Medium": [255, 165, 0],
-                "High": [255, 0, 0]
-            })
-            st.pydeck_chart(pdk.Deck(
-                map_style="mapbox://styles/mapbox/light-v9",
-                initial_view_state=pdk.ViewState(latitude=0, longitude=0, zoom=1),
-                layers=[
-                    pdk.Layer(
-                        "ScatterplotLayer",
-                        data=pred_df,
-                        get_position=["longitude", "latitude"],
-                        get_fill_color="color",
-                        get_radius=50000,
-                    ),
-                ],
-            ))
-        st.success("Prediction complete.")
+                df["Predicted_Risk"] = model.predict(X)
+                st.session_state["pred_df"] = df
 
-# --------------------------------------------------------------------------
-# Reports
-# --------------------------------------------------------------------------
-elif page == "Reports":
-    st.header("📑 Reports")
+                st.success("✅ Model trained successfully!")
+
+        if st.session_state["pred_df"] is not None:
+            pred_df = st.session_state["pred_df"]
+
+            st.subheader("📍 Predicted Risk Map")
+            fig = px.scatter_mapbox(
+                pred_df,
+                lat="Latitude",
+                lon="Longitude",
+                color="Predicted_Risk",
+                color_discrete_map={"Low": "green", "Medium": "orange", "High": "red"},
+                zoom=3,
+                height=600,
+                mapbox_style="carto-positron"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+# ============================================================
+# --- Page 5: Reports ---
+# ============================================================
+elif menu == "📈 Reports":
+    st.header("Generate Summary Report")
 
     if st.session_state["pred_df"] is None:
-        st.warning("Please run prediction first.")
+        st.warning("Please train a model first in the Prediction Dashboard.")
     else:
+        metrics = st.session_state["metrics"]
         pred_df = st.session_state["pred_df"]
-        df = st.session_state["data"]
-        metrics = st.session_state["metrics"] or {}
-        summary_text = "The predictive model has successfully classified pollution risk zones."
 
-        col1, col2 = st.columns(2)
-        with col1:
-            excel_bytes = create_excel_report(df, pred_df)
-            st.download_button(
-                "📥 Download Excel Report",
-                data=excel_bytes,
-                file_name="microplastic_report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        with col2:
-            pdf_bytes = create_pdf_report(summary_text, pred_df, metrics)
-            st.download_button(
-                "📄 Download PDF Report",
-                data=pdf_bytes,
-                file_name="microplastic_report.pdf",
-                mime="application/pdf"
-            )
-        st.success("Reports generated successfully.")
+        high_risk_sites = pred_df[pred_df["Predicted_Risk"] == "High"]
+
+        pdf_bytes = generate_pdf_report(metrics, high_risk_sites)
+        st.download_button("📄 Download PDF Report", data=pdf_bytes, file_name="Microplastic_Risk_Report.pdf")
+
+        st.subheader("Model Summary")
+        st.write(metrics)
+
+        st.subheader("High Risk Locations")
+        st.dataframe(high_risk_sites[["Latitude", "Longitude", "Predicted_Risk"]])
