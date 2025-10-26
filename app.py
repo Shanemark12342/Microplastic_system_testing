@@ -260,8 +260,11 @@ def generate_report(df, predictions, model_results, plot_buffer):
         pdf.set_font("Arial", "B", 14)
         pdf.cell(0, 10, "3. Visualizations and Risk Map", 0, 1)
         pdf.ln(2)
-        pdf.image(plot_buffer, x=10, y=pdf.get_y(), w=190)
-        pdf.ln(10)
+        # Add the image from the buffer
+        # Ensure the image fits within the PDF page width (e.g., 190mm if page width is 210mm)
+        pdf.image(BytesIO(plot_buffer), x=10, y=pdf.get_y(), w=190)
+        pdf.ln(10) # Adjust line break after image
+
 
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "4. Identified High-Risk Zones & Mitigation Strategies", 0, 1)
@@ -554,4 +557,4 @@ elif page == "Prediction Dashboard":
                                             title="Predicted Microplastic Pollution Risk Across Locations")
                 fig_map.update_layout(mapbox_style="open-street-map", height=500) # Set a fixed height
                 fig_map.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
-                st.plotly_chart(fig_
+                st.plotly_chart(fig_map, use_container_
