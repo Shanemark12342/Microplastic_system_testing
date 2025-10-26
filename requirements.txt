@@ -1,9 +1,10 @@
-streamlit==1.28.1
-pandas==2.1.4
-numpy==1.26.2
-scikit-learn==1.3.2
-matplotlib==3.8.2
-seaborn==0.13.0
-plotly==5.17.0
-fpdf==1.7.2
-xgboost==2.0.2
+streamlit
+pandas
+numpy
+plotly
+scikit-learn
+xgboost
+matplotlib
+seaborn
+fpdf2 # Use fpdf2 as it's more maintained than fpdf
+openpyxl # Needed by pandas to read/write .xlsx files
