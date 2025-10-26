@@ -554,7 +554,3 @@ elif page == "Prediction Dashboard":
                                             } if location_col else {"Predicted_Risk": True, "True_Risk": True, "latitude": ':.2f', "longitude": ':.2f'},
                                             color_discrete_map=risk_color_map,
                                             category_orders={"Predicted_Risk": risk_level_order}, # Ensure consistent legend order
-                                            title="Predicted Microplastic Pollution Risk Across Locations")
-                fig_map.update_layout(mapbox_style="open-street-map", height=500) # Set a fixed height
-                fig_map.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
-                st.plotly_chart(fig_map, use_container_)
