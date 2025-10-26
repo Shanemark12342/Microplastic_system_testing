@@ -540,7 +540,7 @@ elif page == "Prediction Dashboard":
             if 'latitude' in map_df.columns and 'longitude' in map_df.columns and not map_df.empty:
                 risk_color_map = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
 
-                fig_map = px.scatter_mapbox(map_df,)
+                fig_map = px.scatter_mapbox(map_df,
                                             lat="latitude",
                                             lon="longitude",
                                             color="Predicted_Risk",
@@ -552,5 +552,4 @@ elif page == "Prediction Dashboard":
                                                 "latitude": ':.2f',
                                                 "longitude": ':.2f'
                                             } if location_col else {"Predicted_Risk": True, "True_Risk": True, "latitude": ':.2f', "longitude": ':.2f'},
-                                            color_discrete_map=risk_color_map,
-                                            category_orders={"Predicted_Risk": risk_level_order}, # Ensure consistent legend order
+                                            color_
