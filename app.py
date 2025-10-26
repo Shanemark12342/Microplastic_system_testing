@@ -540,7 +540,7 @@ elif page == "Prediction Dashboard":
             if 'latitude' in map_df.columns and 'longitude' in map_df.columns and not map_df.empty:
                 risk_color_map = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
 
-                fig_map = px.scatter_mapbox(map_df,
+                fig_map = px.scatter_mapbox(map_df,)
                                             lat="latitude",
                                             lon="longitude",
                                             color="Predicted_Risk",
