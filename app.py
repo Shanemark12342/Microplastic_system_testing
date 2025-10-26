@@ -304,12 +304,18 @@ if st.session_state['processed_df'] is not None:
     suggested_pollution_cols = [col for col in all_columns if pd.api.types.is_numeric_dtype(st.session_state['processed_df'][col]) and col not in ['latitude', 'longitude']]
 
     location_col_options = ['None'] + [col for col in all_columns if st.session_state['processed_df'][col].nunique() < 100 or not pd.api.types.is_numeric_dtype(st.session_state['processed_df'][col])]
-    location_col = st.sidebar.selectbox("Select Location Column (for map/hover)", location_col_options, key='sidebar_location', index=0 if 'None' in location_col_options else (location_col_options.index(st.session_state['location_col']) if st.session_state['location_col'] in location_col_options else 0))
+    location_col_index = 0
+    if st.session_state['location_col'] in location_col_options:
+        location_col_index = location_col_options.index(st.session_state['location_col'])
+    location_col = st.sidebar.selectbox("Select Location Column (for map/hover)", location_col_options, key='sidebar_location', index=location_col_index)
     
     pollution_indicators = st.sidebar.multiselect("Select Pollution Indicators", suggested_pollution_cols, default=st.session_state['pollution_indicators'] if st.session_state['pollution_indicators'] else [], key='sidebar_indicators')
     
     temporal_col_options = ['None'] + [col for col in all_columns if pd.api.types.is_datetime64_any_dtype(st.session_state['processed_df'][col]) or pd.api.types.is_string_dtype(st.session_state['processed_df'][col])] # Allow string for potential conversion
-    temporal_col = st.sidebar.selectbox("Select Temporal Column", temporal_col_options, key='sidebar_temporal', index=0 if 'None' in temporal_col_options else (temporal_col_options.index(st.session_state['temporal_col']) if st.session_state['temporal_col'] in temporal_col_options else 0))
+    temporal_col_index = 0
+    if st.session_state['temporal_col'] in temporal_col_options:
+        temporal_col_index = temporal_col_options.index(st.session_state['temporal_col'])
+    temporal_col = st.sidebar.selectbox("Select Temporal Column", temporal_col_options, key='sidebar_temporal', index=temporal_col_index)
 
     st.session_state['location_col'] = location_col if location_col != 'None' else None
     st.session_state['pollution_indicators'] = pollution_indicators
@@ -495,30 +501,35 @@ elif page == "Prediction Dashboard":
             # Try to merge with the original processed_df using the index
             # This assumes your processed_df still has the original index from before train_test_split
             if ('latitude' in df.columns and 'longitude' in df.columns):
-                # We need to ensure map_df's index aligns with original df's index where lat/lon are.
-                # A simple merge based on features might not be 1:1 or unique.
-                # A more robust solution would be to save original index or unique IDs when creating X_test.
-                # For this generic code, let's assume `df` contains the superset of locations
-                # and we can add lat/lon from it.
-
-                # If X_test inherited original indices
+                # If X_test inherited original indices, merge directly
                 if map_df.index.isin(df.index).all():
-                    map_df = map_df.merge(df[['latitude', 'longitude', location_col]], left_index=True, right_index=True, how='left')
+                    # Ensure df has the columns before attempting to select them
+                    cols_to_merge = ['latitude', 'longitude']
+                    if location_col and location_col in df.columns:
+                        cols_to_merge.append(location_col)
+                    map_df = map_df.merge(df[cols_to_merge], left_index=True, right_index=True, how='left')
                 else:
-                    st.warning("Original DataFrame index not fully preserved in test set for direct merge. Attempting to add lat/lon from original df based on available features.")
+                    st.warning("Original DataFrame index not fully preserved in test set. Attempting to add lat/lon from original df based on available features (less reliable).")
                     # Fallback: Merge on available columns if index merge fails or is not applicable
-                    # This is less reliable but a common practical approach if no unique ID.
                     merge_cols = [col for col in map_df.columns if col in df.columns and col not in ['Predicted_Risk', 'True_Risk']]
                     if merge_cols:
-                        map_df = map_df.merge(df[['latitude', 'longitude', location_col] + merge_cols].drop_duplicates(), on=merge_cols, how='left', suffixes=('', '_df'))
-                        # Prioritize existing lat/lon in map_df if they were features
-                        map_df['latitude'] = map_df['latitude_df'].fillna(map_df['latitude'])
-                        map_df['longitude'] = map_df['longitude_df'].fillna(map_df['longitude'])
-                        if location_col:
-                            map_df[location_col] = map_df[location_col + '_df'].fillna(map_df[location_col])
-                        map_df = map_df.drop(columns=[col for col in map_df.columns if '_df' in col], errors='ignore')
+                        cols_to_get = ['latitude', 'longitude']
+                        if location_col and location_col in df.columns:
+                            cols_to_get.append(location_col)
+                        
+                        df_for_merge = df[cols_to_get + merge_cols].drop_duplicates()
+                        map_df = map_df.merge(df_for_merge, on=merge_cols, how='left', suffixes=('', '_df'))
+                        
+                        # Handle potential duplicate columns after merge
+                        for c in ['latitude', 'longitude']:
+                            if f'{c}_df' in map_df.columns:
+                                map_df[c] = map_df[c].fillna(map_df[f'{c}_df'])
+                                map_df = map_df.drop(columns=[f'{c}_df'])
+                        if location_col and f'{location_col}_df' in map_df.columns:
+                             map_df[location_col] = map_df[location_col].fillna(map_df[f'{location_col}_df'])
+                             map_df = map_df.drop(columns=[f'{location_col}_df'])
                     else:
-                        st.error("Cannot merge for latitude/longitude without common columns.")
+                        st.error("Cannot merge for latitude/longitude without common columns between test data and original data.")
 
                 # Drop rows where latitude or longitude are still missing after merge attempts
                 map_df.dropna(subset=['latitude', 'longitude'], inplace=True)
@@ -543,11 +554,4 @@ elif page == "Prediction Dashboard":
                                             title="Predicted Microplastic Pollution Risk Across Locations")
                 fig_map.update_layout(mapbox_style="open-street-map", height=500) # Set a fixed height
                 fig_map.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
-                st.plotly_chart(fig_map, use_container_width=True)
-
-                # Save the plot to a buffer for PDF report
-                buf = BytesIO()
-                fig_map.write_image(buf, format="png", width=800, height=450, scale=2)
-                st.session_state['risk_map_plot_buffer'] = buf.getvalue()
-            else:
-                st.warning("Cannot generate map: '
+                st.plotly_chart(fig_
