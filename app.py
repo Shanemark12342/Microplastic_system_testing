@@ -11,7 +11,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
-from fpdf import FPDF  # You'll need to install fpdf: pip install fpdf
+from fpdf2 import FPDF  # You'll need to install fpdf2: pip install fpdf2
 
 # --- Configuration ---
 st.set_page_config(
@@ -387,4 +387,4 @@ elif page == "Data Analysis":
         st.subheader("Time-series Trends (if temporal data is available)")
         if st.session_state['temporal_col'] and st.session_state['temporal_col'] in df.columns:
             try:
-                df[st.session_state['temporal_col']] = pd.to_datetime(df[st.session_state['temporal_col']    
+                df[st.session_state['temporal_col']] = pd.to_datetime(df[st.session_state['
