@@ -2,9 +2,8 @@ streamlit
 pandas
 numpy
 plotly
-scikit-learn
-xgboost
 matplotlib
 seaborn
-fpdf2
-openpyxl
+scikit-learn
+xgboost
+fpdf
