@@ -6,5 +6,5 @@ scikit-learn
 xgboost
 matplotlib
 seaborn
-fpdf2 # Use fpdf2 as it's more maintained than fpdf
-openpyxl # Needed by pandas to read/write .xlsx files
+fpdf2
+openpyxl
