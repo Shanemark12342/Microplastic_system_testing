@@ -557,4 +557,4 @@ elif page == "Prediction Dashboard":
                                             title="Predicted Microplastic Pollution Risk Across Locations")
                 fig_map.update_layout(mapbox_style="open-street-map", height=500) # Set a fixed height
                 fig_map.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
-                st.plotly_chart(fig_map, use_container_
+                st.plotly_chart(fig_map, use_container_)
