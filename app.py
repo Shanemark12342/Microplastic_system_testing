@@ -3,15 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.model_selection import train_test_split, cross_val_score, KFold
+from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
-from sklearn.cluster import KMeans
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, classification_report, silhouette_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
-from fpdf2 import FPDF  # You'll need to install fpdf2: pip install fpdf2
+from fpdf import FPDF # You'll need to install fpdf: pip install fpdf
 
 # --- Configuration ---
 st.set_page_config(
@@ -66,7 +65,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Helper Functions ---
+
+# --- Helper Functions (Stubs for now) ---
 
 def load_data(uploaded_file):
     """Loads data from CSV or Excel."""
@@ -80,55 +80,36 @@ def load_data(uploaded_file):
     return df
 
 def preprocess_data(df):
-    """Data cleaning and preprocessing."""
+    """Placeholder for data cleaning and preprocessing."""
     if df is None:
         return None
 
     st.subheader("Data Preprocessing Steps (Applied Automatically)")
     st.info(f"Initial dataset shape: {df.shape}")
 
-    # Drop rows with any missing values
+    # Example: Drop rows with any missing values (for simplicity)
     original_rows = df.shape[0]
     df.dropna(inplace=True)
     st.write(f"- Removed {original_rows - df.shape[0]} rows with missing values.")
 
-    # Drop duplicates
+    # Example: Drop duplicates
     original_rows = df.shape[0]
     df.drop_duplicates(inplace=True)
     st.write(f"- Removed {original_rows - df.shape[0]} duplicate rows.")
 
-    # Basic feature engineering (if 'location' column exists)
+    # Example: Basic feature engineering (if 'location' column exists)
     if 'location' in df.columns:
         df['location_encoded'] = df['location'].astype('category').cat.codes
         st.write("- Encoded 'location' column.")
 
-    # Normalize numerical columns (for clustering)
-    numeric_cols = df.select_dtypes(include=np.number).columns
-    if len(numeric_cols) > 0:
-        df[numeric_cols] = (df[numeric_cols] - df[numeric_cols].mean()) / df[numeric_cols].std()
-        st.write("- Normalized numerical columns for clustering.")
-
     st.success("Preprocessing complete!")
     return df
 
-def perform_clustering(df, features, n_clusters=3):
-    """Performs K-Means clustering."""
-    if not features:
-        st.error("No features selected for clustering.")
-        return None, None
-
-    X = df[features]
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    clusters = kmeans.fit_predict(X)
-    silhouette_avg = silhouette_score(X, clusters)
-    st.success(f"Clustering complete! Silhouette Score: {silhouette_avg:.2f}")
-    return clusters, kmeans
-
-def train_model(df, target_column, features, model_type, use_cv=False, cv_folds=5):
-    """Model training with optional K-fold cross-validation."""
+def train_model(df, target_column, features, model_type):
+    """Placeholder for model training."""
     if df is None or target_column not in df.columns or not features:
         st.error("Cannot train model. Please check data, target, and features.")
-        return None, None, None, None
+        return None, None, None
 
     X = df[features]
     y = df[target_column]
@@ -140,7 +121,10 @@ def train_model(df, target_column, features, model_type, use_cv=False, cv_folds=
             st.info(f"Target column '{target_column}' converted to numerical categories: 0=Low, 1=Medium, 2=High.")
         except:
             st.error(f"Could not convert target column '{target_column}' to numerical categories.")
-            return None, None, None, None
+            return None, None, None
+
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y if len(y.unique()) > 1 else None)
 
     model = None
     if model_type == "Random Forest":
@@ -149,30 +133,13 @@ def train_model(df, target_column, features, model_type, use_cv=False, cv_folds=
         model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
 
     if model:
-        if use_cv:
-            # K-fold Cross-Validation
-            kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
-            cv_scores = cross_val_score(model, X, y, cv=kf, scoring='accuracy')
-            st.write(f"Cross-Validation Accuracy Scores: {cv_scores}")
-            st.write(f"Mean CV Accuracy: {cv_scores.mean():.2f} ± {cv_scores.std():.2f}")
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
 
-            # Train on full data for final model
-            model.fit(X, y)
-            y_pred = model.predict(X)  # Predictions on full data for reporting
-
-            accuracy = accuracy_score(y, y_pred)
-            precision = precision_score(y, y_pred, average='weighted', zero_division=0)
-            recall = recall_score(y, y_pred, average='weighted', zero_division=0)
-            f1 = f1_score(y, y_pred, average='weighted', zero_division=0)
-        else:
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y if len(y.unique()) > 1 else None)
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-
-            accuracy = accuracy_score(y_test, y_pred)
-            precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
-            recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
-            f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+        accuracy = accuracy_score(y_test, y_pred)
+        precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+        recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+        f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
 
         st.success(f"Model '{model_type}' trained successfully!")
         st.write(f"**Model Performance:**")
@@ -188,14 +155,12 @@ def train_model(df, target_column, features, model_type, use_cv=False, cv_folds=
             'precision': precision,
             'recall': recall,
             'f1_score': f1,
-            'classification_report': classification_report(y if use_cv else y_test, y_pred, target_names=['Low', 'Medium', 'High'], output_dict=True),
-            'cv_used': use_cv,
-            'cv_scores': cv_scores.tolist() if use_cv else None
+            'classification_report': classification_report(y_test, y_pred, target_names=['Low', 'Medium', 'High'], output_dict=True)
         }
-        return model, X if use_cv else X_test, y if use_cv else y_test
+        return model, X_test, y_test
     return None, None, None
 
-def generate_report(df, predictions, model_results, plot_buffer, clusters=None):
+def generate_report(df, predictions, model_results, plot_buffer):
     """Generates a PDF report."""
     pdf = FPDF()
     pdf.add_page()
@@ -204,59 +169,53 @@ def generate_report(df, predictions, model_results, plot_buffer, clusters=None):
     pdf.ln(10)
 
     pdf.set_font("Arial", "", 12)
-    pdf.multi_cell(0, 10, "This report summarizes the analysis, clustering, predictions for microplastic pollution risk based on the provided dataset and models.")
+    pdf.multi_cell(0, 10, "This report summarizes the analysis and predictions for microplastic pollution risk based on the provided dataset and predictive model.")
     pdf.ln(5)
 
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "1. Analysis Overview", 0, 1)
     pdf.set_font("Arial", "", 12)
     pdf.multi_cell(0, 7, f"Dataset processed: {st.session_state.get('uploaded_filename', 'N/A')} with {df.shape[0]} rows and {df.shape[1]} columns.")
-    pdf.multi_cell(0, 7, f"Key findings narrative: (Example: The analysis identified clusters of high-risk areas and strong correlations between pH levels and microplastic risk.)")
+    pdf.multi_cell(0, 7, f"Key findings narrative: (Example: The analysis identified a strong correlation between pH levels and microplastic risk. High-risk zones are predominantly found in coastal urban areas.)")
     pdf.ln(5)
-
-    if clusters is not None:
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "2. Clustering Results", 0, 1)
-        pdf.set_font("Arial", "", 12)
-        pdf.multi_cell(0, 7, f"Performed K-Means clustering into {len(np.unique(clusters))} clusters. Silhouette Score: {st.session_state.get('silhouette_score', 'N/A'):.2f}")
-        pdf.ln(5)
 
     if model_results:
         pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, f"3. Predictive Model Performance ({model_results['model_type']})", 0, 1)
+        pdf.cell(0, 10, f"2. Predictive Model Performance ({model_results['model_type']})", 0, 1)
         pdf.set_font("Arial", "", 12)
         pdf.cell(0, 7, f"Accuracy: {model_results['accuracy']:.2f}", 0, 1)
         pdf.cell(0, 7, f"Precision (Weighted): {model_results['precision']:.2f}", 0, 1)
         pdf.cell(0, 7, f"Recall (Weighted): {model_results['recall']:.2f}", 0, 1)
         pdf.cell(0, 7, f"F1-Score (Weighted): {model_results['f1_score']:.2f}", 0, 1)
-        if model_results['cv_used']:
-            pdf.cell(0, 7, f"Mean CV Accuracy: {np.mean(model_results['cv_scores']):.2f}", 0, 1)
         pdf.ln(5)
 
         pdf.set_font("Arial", "B", 12)
         pdf.cell(0, 7, "Classification Report:", 0, 1)
         pdf.set_font("Arial", "", 10)
         for class_name, metrics in model_results['classification_report'].items():
-            if isinstance(metrics, dict):
+            if isinstance(metrics, dict): # For 'Low', 'Medium', 'High'
                 pdf.cell(0, 5, f"  {class_name}: Precision={metrics['precision']:.2f}, Recall={metrics['recall']:.2f}, F1-score={metrics['f1-score']:.2f}, Support={metrics['support']}", 0, 1)
-            else:
+            else: # For 'accuracy', 'macro avg', 'weighted avg'
                 pdf.cell(0, 5, f"  {class_name}: {metrics:.2f}", 0, 1)
         pdf.ln(5)
 
     if plot_buffer:
         pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "4. Visualizations and Risk Map", 0, 1)
+        pdf.cell(0, 10, "3. Visualizations and Risk Map", 0, 1)
         pdf.ln(2)
+        # Assuming the plot buffer contains a PNG image
         pdf.image(plot_buffer, x=10, y=pdf.get_y(), w=190)
         pdf.ln(10)
 
     pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "5. Identified High-Risk Zones & Mitigation Strategies", 0, 1)
+    pdf.cell(0, 10, "4. Identified High-Risk Zones & Mitigation Strategies", 0, 1)
     pdf.set_font("Arial", "", 12)
-    pdf.multi_cell(0, 7, "Based on clustering and predictions, high-risk zones are identified. Suggested mitigation strategies include enhanced waste management, public awareness campaigns, and stricter industrial regulations.")
+    # This part would require more sophisticated logic to identify actual high-risk zones from predictions
+    pdf.multi_cell(0, 7, "Based on the predictions, high-risk zones (e.g., coordinates X, Y or specific locations A, B) are identified in areas with high industrial discharge and dense population. Suggested mitigation strategies include enhanced waste management, public awareness campaigns, and stricter industrial regulations.")
     pdf.ln(10)
 
-    return pdf.output(dest='S').encode('latin-1')
+    return pdf.output(dest='S').encode('latin-1') # Return as bytes
+
 
 # --- Initialize Session State ---
 if 'df' not in st.session_state:
@@ -275,16 +234,13 @@ if 'model_report' not in st.session_state:
     st.session_state['model_report'] = None
 if 'uploaded_filename' not in st.session_state:
     st.session_state['uploaded_filename'] = "No file uploaded"
-if 'clusters' not in st.session_state:
-    st.session_state['clusters'] = None
-if 'silhouette_score' not in st.session_state:
-    st.session_state['silhouette_score'] = None
+
 
 # --- Sidebar Navigation ---
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to",
-    ["Home", "Upload Dataset", "Data Analysis", "Clustering", "Prediction Dashboard", "Reports"]
+    ["Home", "Upload Dataset", "Data Analysis", "Prediction Dashboard", "Reports"]
 )
 
 st.sidebar.subheader("Input Variables (Global)")
@@ -307,19 +263,20 @@ if st.session_state['processed_df'] is not None:
 else:
     st.sidebar.info("Upload a dataset first to select variables.")
 
+
 # --- Main Content Area ---
 
 if page == "Home":
     st.title("Welcome to the Microplastic Pollution Risk Assessment System")
-    st.image("https://via.placeholder.com/700x300.png?text=Environmental+Sustainability", use_column_width=True)
+    st.image("https://via.placeholder.com/700x300.png?text=Environmental+Sustainability", use_column_width=True) # Placeholder image
     st.markdown("""
         <p style='font-size: 1.1em;'>
         This platform leverages advanced predictive analytics to assess and visualize the risk levels of microplastic pollution across various environments.
-        Utilizing Streamlit for an interactive user experience and powerful data mining algorithms like Random Forest, XGBoost, and K-Means clustering,
+        Utilizing Streamlit for an interactive user experience and powerful data mining algorithms like Random Forest and XGBoost,
         we provide insights into pollution trends, potential high-risk zones, and actionable mitigation strategies.
         </p>
         <p style='font-size: 1.1em;'>
-        Navigate through the sections to upload your data, preprocess it, perform clustering, generate predictions with cross-validation, and download comprehensive reports.
+        Navigate through the sections to upload your data, analyze it, generate predictions, and download comprehensive reports.
         </p>
     """, unsafe_allow_html=True)
 
@@ -327,8 +284,7 @@ if page == "Home":
     st.markdown("""
     - **Data Upload & Preprocessing:** Seamlessly upload and clean environmental datasets.
     - **Descriptive Analytics:** Understand your data with interactive charts and statistics.
-    - **Clustering:** Group data into clusters for pattern discovery.
-    - **Predictive Modeling:** Classify microplastic pollution risk with K-fold cross-validation.
+    - **Predictive Modeling:** Classify microplastic pollution risk (Low, Medium, High).
     - **Interactive Dashboards:** Visualize pollution intensity with heatmaps and time-series graphs.
     - **Comprehensive Reporting:** Download detailed reports in PDF or Excel.
     """)
@@ -346,7 +302,7 @@ elif page == "Upload Dataset":
             if st.session_state['df'] is not None:
                 st.write("Original Data Preview:")
                 st.dataframe(st.session_state['df'].head())
-                st.session_state['processed_df'] = preprocess_data(st.session_state['df'].copy())
+                st.session_state['processed_df'] = preprocess_data(st.session_state['df'].copy()) # Pass a copy
 
                 if st.session_state['processed_df'] is not None:
                     st.success("Dataset loaded and preprocessed successfully!")
@@ -375,6 +331,7 @@ elif page == "Data Analysis":
             st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Correlation Matrix")
+        # Select only numeric columns for correlation
         numeric_df = df.select_dtypes(include=np.number)
         if not numeric_df.empty:
             fig_corr = px.imshow(numeric_df.corr(), text_auto=True, aspect="auto",
@@ -387,4 +344,173 @@ elif page == "Data Analysis":
         st.subheader("Time-series Trends (if temporal data is available)")
         if st.session_state['temporal_col'] and st.session_state['temporal_col'] in df.columns:
             try:
-                df[st.session_state['temporal_col']] = pd.to_datetime(df[st.session_state['
+                df[st.session_state['temporal_col']] = pd.to_datetime(df[st.session_state['temporal_col']])
+                # Group by temporal column and average selected indicators
+                if st.session_state['pollution_indicators']:
+                    trend_df = df.groupby(st.session_state['temporal_col'])[st.session_state['pollution_indicators']].mean().reset_index()
+                    fig_time = px.line(trend_df, x=st.session_state['temporal_col'], y=st.session_state['pollution_indicators'],
+                                       title="Pollution Indicator Trends Over Time")
+                    st.plotly_chart(fig_time, use_container_width=True)
+                else:
+                    st.info("Select pollution indicators in the sidebar to view time trends.")
+            except Exception as e:
+                st.warning(f"Could not plot time series. Ensure '{st.session_state['temporal_col']}' is a valid date column. Error: {e}")
+        else:
+            st.info("Select a temporal column in the sidebar to view time-series trends.")
+
+    else:
+        st.warning("Please upload a dataset on the 'Upload Dataset' page first.")
+
+elif page == "Prediction Dashboard":
+    st.title("Prediction Dashboard")
+
+    if st.session_state['processed_df'] is not None:
+        df = st.session_state['processed_df']
+
+        st.subheader("Model Configuration")
+        target_column_options = df.columns.tolist()
+        # Filter out potential ID columns or non-numeric for target
+        target_column_options = [col for col in target_column_options if df[col].nunique() <= 5 or not pd.api.types.is_numeric_dtype(df[col])]
+        target_column = st.selectbox("Select Target Variable (e.g., 'Risk_Level')", target_column_options)
+
+        # Automatically exclude target column from features list
+        available_features = [col for col in df.columns if col != target_column and col != st.session_state.get('location_col') and col != st.session_state.get('temporal_col')]
+        feature_columns = st.multiselect("Select Features for Prediction", available_features, default=available_features)
+
+        model_type = st.radio("Choose Prediction Model", ["Random Forest", "XGBoost"])
+
+        if st.button("Train Model & Generate Predictions"):
+            if target_column and feature_columns:
+                with st.spinner(f"Training {model_type} model..."):
+                    model, X_test, y_test = train_model(df.copy(), target_column, feature_columns, model_type)
+                    if model:
+                        st.session_state['model'] = model
+                        st.session_state['test_data'] = X_test
+                        st.session_state['test_labels'] = y_test
+
+                        # Convert predictions back to labels for display if target was categorical
+                        raw_predictions = model.predict(X_test)
+                        if pd.api.types.is_numeric_dtype(df[target_column]): # If target was originally numeric
+                             st.session_state['predictions'] = raw_predictions # Keep as numeric
+                        else: # If target was categorical (converted to 0,1,2)
+                             # Create a mapping from numeric to original labels
+                             unique_labels = sorted(df[target_column].unique())
+                             label_mapping = {i: label for i, label in enumerate(unique_labels)}
+                             st.session_state['predictions'] = pd.Series(raw_predictions).map(label_mapping).values
+
+                        st.success("Model trained and predictions generated!")
+                    else:
+                        st.error("Model training failed. Please check your selections.")
+            else:
+                st.warning("Please select a target variable and at least one feature.")
+
+        if st.session_state['model'] is not None and st.session_state['predictions'] is not None:
+            st.subheader("Prediction Results")
+
+            # Create a dataframe for displaying predictions
+            prediction_df = pd.DataFrame(st.session_state['test_data'], columns=st.session_state['test_data'].columns)
+            prediction_df['True_Risk'] = st.session_state['test_labels']
+            prediction_df['Predicted_Risk'] = st.session_state['predictions']
+
+            st.write("Sample Predictions:")
+            st.dataframe(prediction_df.head())
+
+            st.subheader("Risk Map (Geographic Heatmap)")
+            if st.session_state.get('location_col') and 'latitude' in df.columns and 'longitude' in df.columns: # Assuming lat/lon exist
+                # For visualization, we'll use the original dataframe but add predictions
+                # This part is complex and needs to map test data back to original locations
+                # For simplicity, let's create a dummy location and risk for demonstration
+                plot_df = df.copy()
+                plot_df['predicted_risk_level'] = np.random.choice(['Low', 'Medium', 'High'], size=len(plot_df)) # Placeholder
+
+                # Map risk levels to colors
+                risk_color_map = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
+                plot_df['color'] = plot_df['predicted_risk_level'].map(risk_color_map)
+
+                fig_map = px.scatter_mapbox(plot_df,
+                                            lat="latitude", # Assuming 'latitude' and 'longitude' columns
+                                            lon="longitude",
+                                            color="predicted_risk_level",
+                                            size_max=15, zoom=3,
+                                            hover_name=st.session_state['location_col'] if st.session_state['location_col'] else None,
+                                            hover_data=st.session_state['pollution_indicators'] + ['predicted_risk_level'] if st.session_state['pollution_indicators'] else ['predicted_risk_level'],
+                                            color_discrete_map=risk_color_map,
+                                            title="Microplastic Pollution Risk Map")
+                fig_map.update_layout(mapbox_style="open-street-map")
+                fig_map.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
+                st.plotly_chart(fig_map, use_container_width=True)
+
+                # Save the plot to a buffer for PDF report
+                buf = BytesIO()
+                fig_map.write_image(buf, format="png", width=800, height=450, scale=2)
+                st.session_state['risk_map_plot_buffer'] = buf.getvalue()
+            else:
+                st.warning("To view the risk map, ensure your dataset has 'latitude' and 'longitude' columns and a location column is selected in the sidebar.")
+                st.session_state['risk_map_plot_buffer'] = None
+
+            st.subheader("Model Accuracy Scorecard")
+            if st.session_state['model_report']:
+                st.markdown(f"""
+                - **Model Type:** {st.session_state['model_report']['model_type']}
+                - **Overall Accuracy:** <span style='color: #007bff; font-weight: bold;'>{st.session_state['model_report']['accuracy']:.2f}</span>
+                - **Weighted Precision:** {st.session_state['model_report']['precision']:.2f}
+                - **Weighted Recall:** {st.session_state['model_report']['recall']:.2f}
+                - **Weighted F1-Score:** {st.session_state['model_report']['f1_score']:.2f}
+                """, unsafe_allow_html=True)
+                st.write("Classification Report:")
+                st.json(st.session_state['model_report']['classification_report'])
+            else:
+                st.info("Train the model first to see the scorecard.")
+
+    else:
+        st.warning("Please upload and preprocess a dataset on the 'Upload Dataset' page first.")
+
+elif page == "Reports":
+    st.title("Generate & Download Reports")
+
+    if st.session_state['processed_df'] is not None and st.session_state['model'] is not None and st.session_state['predictions'] is not None:
+        st.write("Generate comprehensive reports based on your analysis and predictions.")
+
+        if st.button("Generate PDF Report"):
+            with st.spinner("Generating PDF report..."):
+                pdf_output = generate_report(
+                    st.session_state['processed_df'],
+                    st.session_state['predictions'],
+                    st.session_state['model_report'],
+                    st.session_state.get('risk_map_plot_buffer')
+                )
+                st.download_button(
+                    label="Download PDF Report",
+                    data=pdf_output,
+                    file_name="microplastic_risk_report.pdf",
+                    mime="application/pdf"
+                )
+                st.success("PDF report generated and ready for download!")
+
+        if st.button("Generate Excel Report (Raw Data & Predictions)"):
+            with st.spinner("Generating Excel report..."):
+                # Prepare data for Excel
+                if st.session_state['test_data'] is not None:
+                    report_df = pd.DataFrame(st.session_state['test_data'])
+                    report_df['True_Risk'] = st.session_state['test_labels']
+                    report_df['Predicted_Risk'] = st.session_state['predictions']
+
+                    # Save to Excel
+                    excel_buffer = BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                        report_df.to_excel(writer, sheet_name='Predictions', index=False)
+                        st.session_state['processed_df'].to_excel(writer, sheet_name='Original Data', index=False)
+                        # You can add more sheets with descriptive stats or model metrics if needed
+
+                    st.download_button(
+                        label="Download Excel Report",
+                        data=excel_buffer.getvalue(),
+                        file_name="microplastic_risk_data_and_predictions.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    st.success("Excel report generated and ready for download!")
+                else:
+                    st.warning("No prediction data available for Excel report.")
+
+    else:
+        st.warning("Please upload a dataset, run data analysis, and train a model before generating reports.")
