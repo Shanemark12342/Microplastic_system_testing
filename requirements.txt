@@ -3,9 +3,7 @@ pandas
 numpy
 scikit-learn
 matplotlib
+seaborn
 plotly
-pydeck
-fpdf
-openpyxl
-pytest
 xgboost
+fpdf
